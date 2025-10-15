@@ -18,6 +18,10 @@ lint:
 	uv run ruff check .
 	uv run ruff format --check .
 
+.PHONY: test
+test:
+	uv run pytest
+
 .PHONY: clean
 clean:
 	rm -rf `find . -name __pycache__`

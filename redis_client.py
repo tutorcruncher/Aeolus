@@ -2,7 +2,9 @@ import os
 
 import redis.asyncio as redis
 
-from logger import aeolus_logger
+from logger import get_logger
+
+logger = get_logger("redis")
 
 
 class RedisClient:
@@ -16,14 +18,14 @@ class RedisClient:
         """Connect to Redis"""
         if self.client is None:
             self.client = await redis.from_url(self.redis_url, encoding="utf-8", decode_responses=True)
-            aeolus_logger.info(f"Connected to Redis: {self.redis_url}")
+            logger.info(f"Connected: {self.redis_url}")
 
     async def disconnect(self):
         """Disconnect from Redis"""
         if self.client:
             await self.client.close()
             self.client = None
-            aeolus_logger.info("Disconnected from Redis")
+            logger.info("Disconnected")
 
     def get_client(self) -> redis.Redis:
         """Get Redis client instance"""
