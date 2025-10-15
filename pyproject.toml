@@ -20,3 +20,28 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/tutorcruncher/aeolus"
 Repository = "https://github.com/tutorcruncher/aeolus"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [".venv", "__pycache__", "*.pyc"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
+    "UP",
+]
+ignore = [
+    "E501",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["aeolus"]

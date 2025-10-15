@@ -1,7 +1,8 @@
 import logging
 import sys
 
-def setup_logger(name: str = 'aeolus') -> logging.Logger:
+
+def setup_logger(name: str = "aeolus") -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
@@ -10,12 +11,12 @@ def setup_logger(name: str = 'aeolus') -> logging.Logger:
         handler.setLevel(logging.INFO)
 
         formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
 
     return logger
 
-aeolus_logger = setup_logger('aeolus')
+
+aeolus_logger = setup_logger("aeolus")
