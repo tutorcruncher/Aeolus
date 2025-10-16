@@ -2,6 +2,8 @@ import os
 
 import socketio
 from aiohttp import web
+from aiohttp_cors import ResourceOptions
+from aiohttp_cors import setup as cors_setup
 from dotenv import load_dotenv
 
 from api.routes import setup_routes
@@ -15,13 +17,38 @@ PORT = int(os.getenv("PORT", "3000"))
 CORS_ORIGIN = os.getenv("CORS_ORIGIN", "*")
 AUTH_TOKEN_PREFIX = os.getenv("AUTH_TOKEN_PREFIX", "tc2:socket:auth")
 
-sio = socketio.AsyncServer(async_mode="aiohttp", cors_allowed_origins=CORS_ORIGIN, logger=True, engineio_logger=False)
+# Parse CORS_ORIGIN for Socket.IO
+if CORS_ORIGIN == "*":
+    cors_allowed_origins = "*"
+else:
+    cors_allowed_origins = [CORS_ORIGIN]
+
+sio = socketio.AsyncServer(
+    async_mode="aiohttp", cors_allowed_origins=cors_allowed_origins, logger=True, engineio_logger=True
+)
 
 app = web.Application()
+
+cors_config = {
+    CORS_ORIGIN: ResourceOptions(allow_credentials=True, expose_headers="*", allow_headers="*", allow_methods="*")
+}
+if CORS_ORIGIN == "*":
+    cors_config = {
+        "*": ResourceOptions(allow_credentials=True, expose_headers="*", allow_headers="*", allow_methods="*")
+    }
+
+cors = cors_setup(app, defaults=cors_config)
+
 sio.attach(app)
 
 setup_socket_events(sio, AUTH_TOKEN_PREFIX)
 setup_routes(app)
+
+for route in list(app.router.routes()):
+    try:
+        cors.add(route)
+    except ValueError:
+        pass
 
 
 async def on_startup(app):

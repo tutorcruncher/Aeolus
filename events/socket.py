@@ -10,7 +10,6 @@ auth_logger = get_logger("socket.auth")
 
 
 async def validate_auth_token(token: str, auth_token_prefix: str) -> dict:
-    """Validate auth token from Redis. Token stored by TC2."""
     try:
         redis_key = f"{auth_token_prefix}:{token}"
         session_data = await redis_client.get_client().get(redis_key)
@@ -36,7 +35,6 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
 
     @sio.event
     async def connect(sid, environ, auth):
-        """Client connects with auth token."""
         token = auth.get("token") if auth else None
 
         if not token:
@@ -62,7 +60,6 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
 
     @sio.event
     async def disconnect(sid):
-        """Client disconnects."""
         try:
             session = await sio.get_session(sid)
             disconnect_logger.info(f"Disconnected: {sid} (user: {session.get('userId')})")
@@ -71,7 +68,6 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
 
     @sio.event
     async def channel_join(sid, data):
-        """Client joins a chat channel. Creates Socket.IO room if first user."""
         channel_id = data.get("channelId")
 
         if not channel_id:
@@ -84,10 +80,7 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
         await sio.enter_room(sid, channel_id)
         channel_logger.info(f"User {user_id} ({sid}) joined channel: {channel_id}")
 
-        # Confirm to sender
         await sio.emit("channel:joined", {"channelId": channel_id}, to=sid)
-
-        # Notify others in channel
         await sio.emit(
             "user:joined",
             {"userId": user_id, "channelId": channel_id},
@@ -97,7 +90,6 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
 
     @sio.event
     async def channel_leave(sid, data):
-        """Client leaves a chat channel."""
         channel_id = data.get("channelId")
 
         if not channel_id:
@@ -108,11 +100,8 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
 
         await sio.leave_room(sid, channel_id)
         channel_logger.info(f"User {user_id} ({sid}) left channel: {channel_id}")
-
-        # Confirm to sender
         await sio.emit("channel:left", {"channelId": channel_id}, to=sid)
 
-        # Notify others
         await sio.emit(
             "user:left",
             {"userId": user_id, "channelId": channel_id},
@@ -121,10 +110,6 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
 
     @sio.event
     async def message_send(sid, data):
-        """
-        Broadcast message to channel in real-time.
-        NOTE: Client must ALSO POST to TC2 API to persist message to database.
-        """
         channel_id = data.get("channelId")
         message_content = data.get("content")
 
@@ -136,8 +121,6 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
         user_id = session.get("userId")
 
         message_logger.info(f"Message from user {user_id} in channel {channel_id}")
-
-        # Broadcast to all clients in channel (including sender for confirmation)
         await sio.emit(
             "message:received",
             {
@@ -147,11 +130,11 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             },
             room=channel_id,
+            skip_sid=sid,
         )
 
     @sio.event
     async def typing_start(sid, data):
-        """User started typing."""
         channel_id = data.get("channelId")
 
         if not channel_id:
@@ -159,8 +142,6 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
 
         session = await sio.get_session(sid)
         user_id = session.get("userId")
-
-        # Notify others (exclude sender)
         await sio.emit(
             "typing:user",
             {"userId": user_id, "channelId": channel_id, "typing": True},
@@ -170,7 +151,6 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
 
     @sio.event
     async def typing_stop(sid, data):
-        """User stopped typing."""
         channel_id = data.get("channelId")
 
         if not channel_id:
