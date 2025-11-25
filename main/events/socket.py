@@ -4,7 +4,7 @@ from datetime import datetime
 import socketio
 
 from logger import get_logger
-from redis_client import redis_client
+from main.redis import redis_client
 
 auth_logger = get_logger("socket.auth")
 

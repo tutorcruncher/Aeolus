@@ -6,7 +6,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 # Set SERVER_SECRET before importing api.routes
 os.environ["SERVER_SECRET"] = "test-secret-key"
 
-from api.routes import setup_routes
+from main.api import setup_routes
 
 
 class TestHealthRoute(AioHTTPTestCase):

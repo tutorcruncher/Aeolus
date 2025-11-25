@@ -3,9 +3,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import socketio
+from main.redis_client import redis_client
 
-from events.socket import setup_socket_events, validate_auth_token
-from redis_client import redis_client
+from main.events import setup_socket_events, validate_auth_token
 
 
 @pytest.fixture
