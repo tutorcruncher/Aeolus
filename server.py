@@ -17,7 +17,7 @@ PORT = int(os.getenv("PORT", "3000"))
 CORS_ORIGIN = os.getenv("CORS_ORIGIN", "*")
 AUTH_TOKEN_PREFIX = os.getenv("AUTH_TOKEN_PREFIX", "tc2:socket:auth")
 
-# Parse CORS_ORIGIN for Socket.IO
+# TODO This needs to be refactored
 if CORS_ORIGIN == "*":
     cors_allowed_origins = "*"
 else:
@@ -44,6 +44,7 @@ sio.attach(app)
 setup_socket_events(sio, AUTH_TOKEN_PREFIX)
 setup_routes(app)
 
+# TODO Make this a decorator
 for route in list(app.router.routes()):
     try:
         cors.add(route)
