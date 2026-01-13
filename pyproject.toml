@@ -12,6 +12,7 @@ keywords = ["websocket", "socketio", "redis", "realtime", "chat"]
 dependencies = [
     "aiohttp>=3.13.0",
     "aiohttp-cors>=0.7.0",
+    "gunicorn>=23.0.0",
     "python-dotenv>=1.1.1",
     "python-socketio>=5.14.1",
     "redis>=6.4.0",

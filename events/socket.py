@@ -194,7 +194,6 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
             payload["readers"] = readers
 
         read_logger.info(
-            f"Read receipt from user {reader_id} in channel {channel_id} "
-            f"(message {message_id}, complete={complete})"
+            f"Read receipt from user {reader_id} in channel {channel_id} (message {message_id}, complete={complete})"
         )
         await sio.emit("message:read", payload, room=channel_id, skip_sid=sid)

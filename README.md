@@ -27,6 +27,7 @@ REDIS_URL=redis://localhost:6379
 CORS_ORIGIN=*
 AUTH_TOKEN_PREFIX=tc2:socket:auth
 SERVER_SECRET=super-secret-token
+SOCKETIO_REDIS_URL=redis://localhost:6379
 ```
 
 ### TC2 Integration
@@ -42,6 +43,17 @@ Value: JSON with userId, sessionId, etc.
 ```bash
 uv run python server.py
 ```
+
+## Production (Gunicorn)
+
+```bash
+gunicorn server:app --config gunicorn.conf.py
+```
+
+### Heroku
+
+Use the included `Procfile`. For multi-worker deployments, set `SOCKETIO_REDIS_URL` (typically the same as
+`REDIS_URL`) so Socket.IO events are broadcast across workers/dynos.
 
 ## HTTP API
 

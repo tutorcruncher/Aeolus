@@ -1,8 +1,7 @@
-import os
+from unittest.mock import AsyncMock
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
-from unittest.mock import AsyncMock
 
 from api.routes import setup_routes
 

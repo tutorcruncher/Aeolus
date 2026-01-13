@@ -1,1 +1,1 @@
-web: uv run python server.py
+web: gunicorn server:app --config gunicorn.conf.py
