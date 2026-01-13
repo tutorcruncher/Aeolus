@@ -2,9 +2,7 @@ import os
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
-
-# Set SERVER_SECRET before importing api.routes
-os.environ["SERVER_SECRET"] = "test-secret-key"
+from unittest.mock import AsyncMock
 
 from api.routes import setup_routes
 
@@ -39,60 +37,151 @@ class TestStatusRoute(AioHTTPTestCase):
         assert isinstance(data["uptime"], (int, float))
 
 
-class TestInitChannelRoute(AioHTTPTestCase):
+class TestReadReceiptRoute(AioHTTPTestCase):
     async def get_application(self):
         app = web.Application()
-        setup_routes(app)
+        self.mock_sio = AsyncMock()
+        setup_routes(app, socket_server=self.mock_sio, server_secret="test-secret-key")
         return app
 
-    async def test_init_channel_missing_auth_header(self):
-        resp = await self.client.request("POST", "/init-channel", json={"channelId": "test-channel"})
+    async def test_missing_auth_header(self):
+        resp = await self.client.request(
+            "POST",
+            "/chat/read-receipt",
+            json={"channelId": "chat_1", "messageId": 17},
+        )
         assert resp.status == 401
         data = await resp.json()
         assert data["error"] == "Unauthorized"
 
-    async def test_init_channel_invalid_auth_header_format(self):
-        headers = {"Authorization": "InvalidFormat"}
-        resp = await self.client.request("POST", "/init-channel", json={"channelId": "test-channel"}, headers=headers)
-        assert resp.status == 401
-        data = await resp.json()
-        assert data["error"] == "Unauthorized"
-
-    async def test_init_channel_invalid_secret(self):
+    async def test_invalid_secret(self):
         headers = {"Authorization": "Bearer wrong-secret"}
-        resp = await self.client.request("POST", "/init-channel", json={"channelId": "test-channel"}, headers=headers)
+        resp = await self.client.request(
+            "POST",
+            "/chat/read-receipt",
+            json={"channelId": "chat_1", "messageId": 17},
+            headers=headers,
+        )
         assert resp.status == 401
         data = await resp.json()
         assert data["error"] == "Unauthorized"
 
-    async def test_init_channel_missing_channel_id(self):
+    async def test_invalid_json(self):
         headers = {"Authorization": "Bearer test-secret-key"}
-        resp = await self.client.request("POST", "/init-channel", json={}, headers=headers)
-        assert resp.status == 400
-        data = await resp.json()
-        assert data["error"] == "channelId is required"
-
-    async def test_init_channel_invalid_json(self):
-        headers = {"Authorization": "Bearer test-secret-key"}
-        resp = await self.client.request("POST", "/init-channel", data="invalid json", headers=headers)
+        resp = await self.client.request(
+            "POST",
+            "/chat/read-receipt",
+            data="not json",
+            headers=headers,
+        )
         assert resp.status == 400
         data = await resp.json()
         assert data["error"] == "Invalid JSON"
 
-    async def test_init_channel_success(self):
+    async def test_missing_fields(self):
         headers = {"Authorization": "Bearer test-secret-key"}
         resp = await self.client.request(
-            "POST", "/init-channel", json={"channelId": "test-channel", "metadata": {"key": "value"}}, headers=headers
+            "POST",
+            "/chat/read-receipt",
+            json={"channelId": "chat_1"},
+            headers=headers,
         )
-        assert resp.status == 200
+        assert resp.status == 400
         data = await resp.json()
-        assert data["success"] is True
-        assert data["channelId"] == "test-channel"
+        assert data["error"] == "channelId and messageId are required"
 
-    async def test_init_channel_success_without_metadata(self):
+    async def test_success(self):
         headers = {"Authorization": "Bearer test-secret-key"}
-        resp = await self.client.request("POST", "/init-channel", json={"channelId": "test-channel"}, headers=headers)
+        payload = {
+            "channelId": "chat_1",
+            "messageId": 42,
+            "readerId": 9,
+            "readAt": "2026-01-06T12:00:00Z",
+            "complete": True,
+            "readers": [{"role_id": 9, "name": "Tester", "read_at": "2026-01-06T12:00:00Z"}],
+        }
+        resp = await self.client.request("POST", "/chat/read-receipt", json=payload, headers=headers)
         assert resp.status == 200
         data = await resp.json()
         assert data["success"] is True
-        assert data["channelId"] == "test-channel"
+        self.mock_sio.emit.assert_awaited_once_with(
+            "message:read",
+            {
+                "channelId": "chat_1",
+                "messageId": 42,
+                "readerId": 9,
+                "readAt": "2026-01-06T12:00:00Z",
+                "complete": True,
+                "readers": [{"role_id": 9, "name": "Tester", "read_at": "2026-01-06T12:00:00Z"}],
+            },
+            room="chat_1",
+        )
+
+
+class TestChatMessageRoute(AioHTTPTestCase):
+    async def get_application(self):
+        app = web.Application()
+        self.mock_sio = AsyncMock()
+        setup_routes(app, socket_server=self.mock_sio, server_secret="test-secret-key")
+        return app
+
+    async def test_missing_auth_header(self):
+        resp = await self.client.request(
+            "POST",
+            "/chat/message",
+            json={"channelId": "chat_1", "senderId": 1, "content": "Hello", "messageId": 5},
+        )
+        assert resp.status == 401
+        data = await resp.json()
+        assert data["error"] == "Unauthorized"
+
+    async def test_invalid_json(self):
+        headers = {"Authorization": "Bearer test-secret-key"}
+        resp = await self.client.request(
+            "POST",
+            "/chat/message",
+            data="not json",
+            headers=headers,
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["error"] == "Invalid JSON"
+
+    async def test_missing_fields(self):
+        headers = {"Authorization": "Bearer test-secret-key"}
+        resp = await self.client.request(
+            "POST",
+            "/chat/message",
+            json={"channelId": "chat_1", "content": "Hi"},
+            headers=headers,
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["error"] == "channelId, senderId, content, and messageId are required"
+
+    async def test_success(self):
+        headers = {"Authorization": "Bearer test-secret-key"}
+        payload = {
+            "channelId": "chat_1",
+            "senderId": 7,
+            "content": "Hi there",
+            "messageId": 55,
+            "timestamp": "2026-01-06T12:00:00Z",
+            "senderName": "Tester",
+        }
+        resp = await self.client.request("POST", "/chat/message", json=payload, headers=headers)
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is True
+        self.mock_sio.emit.assert_awaited_once_with(
+            "message:received",
+            {
+                "channelId": "chat_1",
+                "senderId": 7,
+                "content": "Hi there",
+                "messageId": 55,
+                "timestamp": "2026-01-06T12:00:00Z",
+                "senderName": "Tester",
+            },
+            room="chat_1",
+        )

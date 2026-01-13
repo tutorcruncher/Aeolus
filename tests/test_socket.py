@@ -208,15 +208,19 @@ class TestSocketEvents:
 
         if message_send_handler:
             await message_send_handler(
-                "test-sid", {"channelId": "channel123", "data": {"text": "Hello"}, "metadata": {"type": "text"}}
+                "test-sid",
+                {
+                    "channelId": "channel123",
+                    "content": "Hello",
+                },
             )
 
             mock_sio.emit.assert_called_once()
             call_args = mock_sio.emit.call_args
             assert call_args[0][0] == "message:received"
             assert call_args[0][1]["senderId"] == "user123"
-            assert call_args[0][1]["socketId"] == "test-sid"
-            assert call_args[0][1]["text"] == "Hello"
+            assert call_args[0][1]["channelId"] == "channel123"
+            assert call_args[0][1]["content"] == "Hello"
             assert "timestamp" in call_args[0][1]
 
     @pytest.mark.asyncio
@@ -276,7 +280,10 @@ class TestSocketEvents:
             await typing_start_handler("test-sid", {"channelId": "channel123"})
 
             mock_sio.emit.assert_called_once_with(
-                "typing:user", {"userId": "user123", "typing": True}, room="channel123", skip_sid="test-sid"
+                "typing:user",
+                {"userId": "user123", "channelId": "channel123", "typing": True},
+                room="channel123",
+                skip_sid="test-sid",
             )
 
     @pytest.mark.asyncio
@@ -296,5 +303,46 @@ class TestSocketEvents:
             await typing_stop_handler("test-sid", {"channelId": "channel123"})
 
             mock_sio.emit.assert_called_once_with(
-                "typing:user", {"userId": "user123", "typing": False}, room="channel123", skip_sid="test-sid"
+                "typing:user",
+                {"userId": "user123", "channelId": "channel123", "typing": False},
+                room="channel123",
+                skip_sid="test-sid",
+            )
+
+    @pytest.mark.asyncio
+    async def test_message_read(self, mock_sio):
+        mock_sio.get_session.return_value = {"userId": "user123"}
+
+        setup_socket_events(mock_sio, "tc2:socket:auth")
+
+        message_read_handler = None
+        for call in mock_sio.event.call_args_list:
+            if len(call[0]) > 0 and call[0][0].__name__ == "message_read":
+                message_read_handler = call[0][0]
+                break
+
+        if message_read_handler:
+            await message_read_handler(
+                "test-sid",
+                {
+                    "channelId": "channel123",
+                    "messageId": "msg-1",
+                    "readAt": "2026-01-06T12:00:00Z",
+                    "complete": True,
+                    "readers": [{"role_id": 5, "name": "Tester", "read_at": "2026-01-06T12:00:00Z"}],
+                },
+            )
+
+            mock_sio.emit.assert_called_with(
+                "message:read",
+                {
+                    "channelId": "channel123",
+                    "messageId": "msg-1",
+                    "readerId": "user123",
+                    "readAt": "2026-01-06T12:00:00Z",
+                    "complete": True,
+                    "readers": [{"role_id": 5, "name": "Tester", "read_at": "2026-01-06T12:00:00Z"}],
+                },
+                room="channel123",
+                skip_sid="test-sid",
             )

@@ -32,6 +32,7 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
     disconnect_logger = get_logger("socket.disconnect")
     channel_logger = get_logger("socket.channel")
     message_logger = get_logger("socket.message")
+    read_logger = get_logger("socket.read")
 
     @sio.event
     async def connect(sid, environ, auth):
@@ -166,3 +167,34 @@ def setup_socket_events(sio: socketio.AsyncServer, auth_token_prefix: str):
             room=channel_id,
             skip_sid=sid,
         )
+
+    @sio.event
+    async def message_read(sid, data):
+        channel_id = data.get("channelId")
+        message_id = data.get("messageId")
+
+        if not channel_id or not message_id:
+            await sio.emit("error", {"message": "channelId and messageId required"}, to=sid)
+            return
+
+        session = await sio.get_session(sid)
+        reader_id = session.get("userId")
+        read_at = data.get("readAt") or datetime.utcnow().isoformat() + "Z"
+        complete = bool(data.get("complete"))
+        readers = data.get("readers")
+
+        payload = {
+            "channelId": channel_id,
+            "messageId": message_id,
+            "readerId": reader_id,
+            "readAt": read_at,
+            "complete": complete,
+        }
+        if isinstance(readers, list):
+            payload["readers"] = readers
+
+        read_logger.info(
+            f"Read receipt from user {reader_id} in channel {channel_id} "
+            f"(message {message_id}, complete={complete})"
+        )
+        await sio.emit("message:read", payload, room=channel_id, skip_sid=sid)

@@ -26,6 +26,7 @@ PORT=3000
 REDIS_URL=redis://localhost:6379
 CORS_ORIGIN=*
 AUTH_TOKEN_PREFIX=tc2:socket:auth
+SERVER_SECRET=super-secret-token
 ```
 
 ### TC2 Integration
@@ -40,6 +41,43 @@ Value: JSON with userId, sessionId, etc.
 
 ```bash
 uv run python server.py
+```
+
+## HTTP API
+
+### POST `/chat/read-receipt`
+
+Used by TC2 to notify Aeolus that a chat message has been read by all participants. Requires the `SERVER_SECRET`
+via `Authorization: Bearer <secret>`.
+
+Payload:
+
+```json
+{
+  "channelId": "chat_1",
+  "messageId": 42,
+  "readerId": 10,
+  "readAt": "2026-01-06T12:00:00Z",
+  "complete": true,
+  "readers": [
+    {"role_id": 10, "name": "Admin", "read_at": "2026-01-06T12:00:00Z"}
+  ]
+}
+```
+
+### POST `/chat/message`
+
+Notifies Aeolus that TC2 has persisted a chat message. Requires the same `SERVER_SECRET`.
+
+```json
+{
+  "channelId": "chat_1",
+  "messageId": 42,
+  "senderId": 10,
+  "content": "Hello world",
+  "timestamp": "2026-01-06T12:00:00Z",
+  "senderName": "Admin"
+}
 ```
 
 ## Socket Events
