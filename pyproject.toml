@@ -60,10 +60,7 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.coverage.run]
 source = ["src/aeolus"]
 omit = [
-    "src/aeolus/core/redis.py",
-    "src/aeolus/core/logging.py",
     "src/aeolus/app.py",
-    "src/aeolus/config/*",
 ]
 
 [tool.coverage.report]

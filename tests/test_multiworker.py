@@ -20,6 +20,7 @@ import socketio
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
+from src.aeolus.api import setup_routes
 from src.aeolus.app import _build_socket_server, create_app, settings_key
 from src.aeolus.events.handlers import SocketEventHandlers
 from src.aeolus.settings import Settings
@@ -716,9 +717,6 @@ class TestHTTPAPIMultiWorkerPropagation(AioHTTPTestCase):
         app = web.Application()
         self.mock_sio = AsyncMock()
         self.mock_sio.emit = AsyncMock()
-
-        from src.aeolus.api import setup_routes
-
         setup_routes(app, socket_server=self.mock_sio, server_secret=TEST_SERVER_SECRET)
         return app
 

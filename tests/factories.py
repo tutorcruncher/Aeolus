@@ -2,9 +2,7 @@
 
 from dataclasses import dataclass
 
-from cryptography.fernet import Fernet
-
-TEST_FERNET_KEY = Fernet.generate_key().decode("utf-8")
+from tests.conftest import create_test_token
 
 
 @dataclass
@@ -23,10 +21,8 @@ class MockSession:
         }
 
 
-def create_auth_token(user_id: int, role_id: int, session_id: int, key: str = TEST_FERNET_KEY) -> str:
-    """Create a Fernet-encrypted auth token."""
-    f = Fernet(key)
-    return f.encrypt(f"{user_id}:{role_id}:{session_id}".encode()).decode("utf-8")
+# Re-export for backwards compatibility
+create_auth_token = create_test_token
 
 
 def create_message_payload(channel_id: str, sender_id: int, content: str, message_id: str) -> dict:

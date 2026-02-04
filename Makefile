@@ -37,8 +37,8 @@ clean:
 
 .PHONY: run
 run:
-	uv run python server.py
+	uv run python -m src.aeolus.app
 
 .PHONY: run-prod
 run-prod:
-	gunicorn server:app --config gunicorn.conf.py
+	gunicorn --config gunicorn.conf.py
