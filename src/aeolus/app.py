@@ -71,9 +71,9 @@ def create_app(settings: Settings | None = None) -> web.Application:
             pass
 
     async def on_startup(app: web.Application) -> None:
-        logger.info(f"Socket server running on port {app['settings'].port}")
-        logger.info(f"CORS origin: {app['settings'].cors_origin}")
-        logger.info(f"Fernet auth: {'configured' if app['settings'].fernet_key else 'NOT configured'}")
+        logger.info(f"Socket server running on port {app[settings_key].port}")
+        logger.info(f"CORS origin: {app[settings_key].cors_origin}")
+        logger.info(f"Fernet auth: {'configured' if app[settings_key].fernet_key else 'NOT configured'}")
         if app[settings_key].socketio_redis_url:
             logger.info("Socket.IO Redis manager enabled")
 
