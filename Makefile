@@ -38,3 +38,7 @@ clean:
 .PHONY: run
 run:
 	uv run python server.py
+
+.PHONY: run-prod
+run-prod:
+	gunicorn server:app --config gunicorn.conf.py

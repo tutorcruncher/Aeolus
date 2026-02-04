@@ -12,6 +12,8 @@ keywords = ["websocket", "socketio", "redis", "realtime", "chat"]
 dependencies = [
     "aiohttp>=3.13.0",
     "aiohttp-cors>=0.7.0",
+    "cryptography>=46.0.4",
+    "gunicorn>=23.0.0",
     "python-dotenv>=1.1.1",
     "python-socketio>=5.14.1",
     "redis>=6.4.0",
@@ -26,6 +28,7 @@ Repository = "https://github.com/tutorcruncher/aeolus"
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
     "ruff>=0.14.0",
 ]
 
@@ -47,4 +50,24 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["aeolus"]
+known-first-party = ["aeolus", "src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["src/aeolus"]
+omit = [
+    "src/aeolus/core/redis.py",
+    "src/aeolus/core/logging.py",
+    "src/aeolus/app.py",
+    "src/aeolus/config/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
