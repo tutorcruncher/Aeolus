@@ -7,15 +7,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from src.aeolus.events import SocketEventHandlers, validate_auth_token
-
-TEST_FERNET_KEY = Fernet.generate_key().decode("utf-8")
-
-
-def create_test_token(user_id: int, role_id: int, session_id: int) -> str:
-    """Create a valid Fernet-encrypted token for testing."""
-    f = Fernet(TEST_FERNET_KEY)
-    token_data = f"{user_id}:{role_id}:{session_id}"
-    return f.encrypt(token_data.encode()).decode("utf-8")
+from tests.conftest import TEST_FERNET_KEY, create_test_token
 
 
 class TestValidateAuthToken:

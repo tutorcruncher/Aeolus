@@ -19,25 +19,17 @@ import pytest
 import socketio
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
-from cryptography.fernet import Fernet
 
 from src.aeolus.app import _build_socket_server, create_app, settings_key
 from src.aeolus.events.handlers import SocketEventHandlers
 from src.aeolus.settings import Settings
+from tests.conftest import TEST_FERNET_KEY, create_test_token
 
-TEST_FERNET_KEY = Fernet.generate_key().decode("utf-8")
 TEST_SERVER_SECRET = "test-server-secret"
 TEST_REDIS_URL = "redis://localhost:6379"
 
 
-def create_test_token(user_id: int, role_id: int, session_id: int) -> str:
-    """Create a valid Fernet-encrypted token for testing."""
-    f = Fernet(TEST_FERNET_KEY)
-    token_data = f"{user_id}:{role_id}:{session_id}"
-    return f.encrypt(token_data.encode()).decode("utf-8")
-
-
-def create_mock_sio_with_sessions():
+def create_mock_sio_with_sessions(worker_id: int | None = None, pubsub_channel=None):
     """
     Create a mock Socket.IO server with working session storage.
 
@@ -45,11 +37,14 @@ def create_mock_sio_with_sessions():
     - Stores sessions in a dict (like real Socket.IO)
     - Tracks all emitted events for assertions
     - Tracks room membership
+    - Optionally integrates with a pub/sub channel for multi-worker tests
     """
     sio = MagicMock(spec=socketio.AsyncServer)
     sio.sessions = {}
     sio.rooms = {}  # Track room membership: {room_id: set(sids)}
     sio.emitted_events = []
+    if worker_id is not None:
+        sio.worker_id = worker_id
 
     async def save_session(sid, data):
         sio.sessions[sid] = data
@@ -67,15 +62,13 @@ def create_mock_sio_with_sessions():
             sio.rooms[room].discard(sid)
 
     async def emit(event, data, room=None, to=None, skip_sid=None):
-        sio.emitted_events.append(
-            {
-                "event": event,
-                "data": data,
-                "room": room,
-                "to": to,
-                "skip_sid": skip_sid,
-            }
-        )
+        source = "local" if pubsub_channel else None
+        entry = {"event": event, "data": data, "room": room, "to": to, "skip_sid": skip_sid}
+        if source:
+            entry["source"] = source
+        sio.emitted_events.append(entry)
+        if pubsub_channel and room:
+            await pubsub_channel.publish(event, data, room, skip_sid)
 
     sio.save_session = AsyncMock(side_effect=save_session)
     sio.get_session = AsyncMock(side_effect=get_session)
@@ -83,7 +76,22 @@ def create_mock_sio_with_sessions():
     sio.leave_room = AsyncMock(side_effect=leave_room)
     sio.emit = AsyncMock(side_effect=emit)
 
+    if pubsub_channel:
+
+        async def on_pubsub_message(event, data, room, skip_sid):
+            sio.emitted_events.append(
+                {"event": event, "data": data, "room": room, "skip_sid": skip_sid, "source": "pubsub"}
+            )
+
+        pubsub_channel.subscribe(on_pubsub_message)
+
     return sio
+
+
+@pytest.fixture
+def mock_sio_with_sessions():
+    """Module-level fixture for mock Socket.IO with session storage."""
+    return create_mock_sio_with_sessions()
 
 
 class TestRedisManagerWarning:
@@ -182,134 +190,13 @@ class TestMultiWorkerMessageDelivery:
 
     @pytest.fixture
     def worker1_sio(self, mock_pubsub_channel):
-        """
-        Socket.IO server for worker 1.
-
-        This mock simulates a Socket.IO server running in worker process 1.
-        It has:
-        - Local session storage (isolated from other workers)
-        - Event tracking for assertions
-        - Pub/sub integration for cross-worker communication
-        """
-        sio = MagicMock(spec=socketio.AsyncServer)
-        sio.sessions = {}
-        sio.rooms = {}
-        sio.emitted_events = []
-        sio.worker_id = 1
-
-        async def save_session(sid, data):
-            sio.sessions[sid] = data
-
-        async def get_session(sid):
-            return sio.sessions.get(sid, {})
-
-        async def enter_room(sid, room):
-            if room not in sio.rooms:
-                sio.rooms[room] = set()
-            sio.rooms[room].add(sid)
-
-        async def leave_room(sid, room):
-            if room in sio.rooms:
-                sio.rooms[room].discard(sid)
-
-        async def track_emit(event, data, room=None, to=None, skip_sid=None):
-            sio.emitted_events.append(
-                {
-                    "event": event,
-                    "data": data,
-                    "room": room,
-                    "to": to,
-                    "skip_sid": skip_sid,
-                    "source": "local",
-                }
-            )
-            # When emitting to a room, publish to shared Redis channel
-            if room:
-                await mock_pubsub_channel.publish(event, data, room, skip_sid)
-
-        sio.save_session = AsyncMock(side_effect=save_session)
-        sio.get_session = AsyncMock(side_effect=get_session)
-        sio.enter_room = AsyncMock(side_effect=enter_room)
-        sio.leave_room = AsyncMock(side_effect=leave_room)
-        sio.emit = AsyncMock(side_effect=track_emit)
-
-        # Subscribe to pub/sub for receiving messages from other workers
-        async def on_pubsub_message(event, data, room, skip_sid):
-            sio.emitted_events.append(
-                {
-                    "event": event,
-                    "data": data,
-                    "room": room,
-                    "skip_sid": skip_sid,
-                    "source": "pubsub",
-                }
-            )
-
-        mock_pubsub_channel.subscribe(on_pubsub_message)
-        return sio
+        """Socket.IO server for worker 1 with pub/sub integration."""
+        return create_mock_sio_with_sessions(worker_id=1, pubsub_channel=mock_pubsub_channel)
 
     @pytest.fixture
     def worker2_sio(self, mock_pubsub_channel):
-        """
-        Socket.IO server for worker 2.
-
-        Same as worker1_sio but represents a separate process.
-        Has its own isolated session storage but shares pub/sub channel.
-        """
-        sio = MagicMock(spec=socketio.AsyncServer)
-        sio.sessions = {}
-        sio.rooms = {}
-        sio.emitted_events = []
-        sio.worker_id = 2
-
-        async def save_session(sid, data):
-            sio.sessions[sid] = data
-
-        async def get_session(sid):
-            return sio.sessions.get(sid, {})
-
-        async def enter_room(sid, room):
-            if room not in sio.rooms:
-                sio.rooms[room] = set()
-            sio.rooms[room].add(sid)
-
-        async def leave_room(sid, room):
-            if room in sio.rooms:
-                sio.rooms[room].discard(sid)
-
-        async def track_emit(event, data, room=None, to=None, skip_sid=None):
-            sio.emitted_events.append(
-                {
-                    "event": event,
-                    "data": data,
-                    "room": room,
-                    "to": to,
-                    "skip_sid": skip_sid,
-                    "source": "local",
-                }
-            )
-            if room:
-                await mock_pubsub_channel.publish(event, data, room, skip_sid)
-
-        sio.save_session = AsyncMock(side_effect=save_session)
-        sio.get_session = AsyncMock(side_effect=get_session)
-        sio.enter_room = AsyncMock(side_effect=enter_room)
-        sio.leave_room = AsyncMock(side_effect=leave_room)
-        sio.emit = AsyncMock(side_effect=track_emit)
-
-        async def on_pubsub_message(event, data, room, skip_sid):
-            sio.emitted_events.append(
-                {
-                    "event": event,
-                    "data": data,
-                    "room": room,
-                    "skip_sid": skip_sid,
-                    "source": "pubsub",
-                }
-            )
-
-        mock_pubsub_channel.subscribe(on_pubsub_message)
-        return sio
+        """Socket.IO server for worker 2 with pub/sub integration."""
+        return create_mock_sio_with_sessions(worker_id=2, pubsub_channel=mock_pubsub_channel)
 
     @pytest.mark.asyncio
     async def test_complete_chat_flow_across_two_workers(self, worker1_sio, worker2_sio, mock_pubsub_channel):
@@ -731,19 +618,15 @@ class TestSameUserMultipleConnections:
     - Load balancer routes connections to different workers
     """
 
-    @pytest.fixture
-    def mock_sio(self):
-        return create_mock_sio_with_sessions()
-
     @pytest.mark.asyncio
-    async def test_same_user_multiple_tabs_same_channel(self, mock_sio):
+    async def test_same_user_multiple_tabs_same_channel(self, mock_sio_with_sessions):
         """
         Test same user with multiple connections to the same channel.
 
         User 123 connects twice (two browser tabs), both joining channel 100.
         Both connections should be in the same room and receive messages.
         """
-        handlers = SocketEventHandlers(mock_sio, TEST_FERNET_KEY)
+        handlers = SocketEventHandlers(mock_sio_with_sessions, TEST_FERNET_KEY)
 
         token = create_test_token(user_id=123, role_id=456, session_id=100)
 
@@ -756,15 +639,15 @@ class TestSameUserMultipleConnections:
         await handlers.channel_join("sid-tab2", {"channelId": "100"})
 
         # Both should be in room 100
-        assert "sid-tab1" in mock_sio.rooms["100"]
-        assert "sid-tab2" in mock_sio.rooms["100"]
+        assert "sid-tab1" in mock_sio_with_sessions.rooms["100"]
+        assert "sid-tab2" in mock_sio_with_sessions.rooms["100"]
 
         # Both sessions exist independently
-        assert mock_sio.sessions["sid-tab1"]["userId"] == 123
-        assert mock_sio.sessions["sid-tab2"]["userId"] == 123
+        assert mock_sio_with_sessions.sessions["sid-tab1"]["userId"] == 123
+        assert mock_sio_with_sessions.sessions["sid-tab2"]["userId"] == 123
 
     @pytest.mark.asyncio
-    async def test_same_user_different_authorized_channels(self, mock_sio):
+    async def test_same_user_different_authorized_channels(self, mock_sio_with_sessions):
         """
         Test same user with connections authorized for different channels.
 
@@ -774,7 +657,7 @@ class TestSameUserMultipleConnections:
 
         Each connection can only join its authorized channel.
         """
-        handlers = SocketEventHandlers(mock_sio, TEST_FERNET_KEY)
+        handlers = SocketEventHandlers(mock_sio_with_sessions, TEST_FERNET_KEY)
 
         token_100 = create_test_token(user_id=123, role_id=456, session_id=100)
         token_200 = create_test_token(user_id=123, role_id=456, session_id=200)
@@ -788,33 +671,33 @@ class TestSameUserMultipleConnections:
         await handlers.channel_join("sid-200", {"channelId": "200"})
 
         # Verify correct room membership
-        assert "sid-100" in mock_sio.rooms["100"]
-        assert "sid-200" in mock_sio.rooms["200"]
-        assert "sid-100" not in mock_sio.rooms.get("200", set())
-        assert "sid-200" not in mock_sio.rooms.get("100", set())
+        assert "sid-100" in mock_sio_with_sessions.rooms["100"]
+        assert "sid-200" in mock_sio_with_sessions.rooms["200"]
+        assert "sid-100" not in mock_sio_with_sessions.rooms.get("200", set())
+        assert "sid-200" not in mock_sio_with_sessions.rooms.get("100", set())
 
     @pytest.mark.asyncio
-    async def test_cross_channel_join_attempt_rejected(self, mock_sio):
+    async def test_cross_channel_join_attempt_rejected(self, mock_sio_with_sessions):
         """
         Test that connection cannot join channel it's not authorized for.
 
         Security test: Even if user is authenticated, they can only
         join the channel specified in their token's chatSessionId.
         """
-        handlers = SocketEventHandlers(mock_sio, TEST_FERNET_KEY)
+        handlers = SocketEventHandlers(mock_sio_with_sessions, TEST_FERNET_KEY)
 
         # Token authorizes only channel 100
         token = create_test_token(user_id=123, role_id=456, session_id=100)
         await handlers.connect("sid-1", {}, {"token": token})
 
         # Try to join channel 200 - should be rejected
-        mock_sio.emitted_events.clear()
+        mock_sio_with_sessions.emitted_events.clear()
         await handlers.channel_join("sid-1", {"channelId": "200"})
 
         # Should have emitted error, not joined room
-        assert "sid-1" not in mock_sio.rooms.get("200", set())
+        assert "sid-1" not in mock_sio_with_sessions.rooms.get("200", set())
 
-        error_events = [e for e in mock_sio.emitted_events if e["event"] == "error"]
+        error_events = [e for e in mock_sio_with_sessions.emitted_events if e["event"] == "error"]
         assert len(error_events) == 1
         assert error_events[0]["data"]["message"] == "Unauthorized for this channel"
         assert error_events[0]["to"] == "sid-1"
@@ -982,19 +865,15 @@ class TestChannelAuthorizationSecurity:
     a user can join. This is the primary access control mechanism.
     """
 
-    @pytest.fixture
-    def mock_sio(self):
-        return create_mock_sio_with_sessions()
-
     @pytest.mark.asyncio
-    async def test_channel_id_string_int_comparison(self, mock_sio):
+    async def test_channel_id_string_int_comparison(self, mock_sio_with_sessions):
         """
         Test that channel authorization handles string/int comparison correctly.
 
         Token has int chatSessionId=100, client sends string channelId="100".
         The comparison uses str() on both sides, so this should work.
         """
-        handlers = SocketEventHandlers(mock_sio, TEST_FERNET_KEY)
+        handlers = SocketEventHandlers(mock_sio_with_sessions, TEST_FERNET_KEY)
 
         # Token with int session_id
         token = create_test_token(user_id=1, role_id=10, session_id=100)
@@ -1004,43 +883,43 @@ class TestChannelAuthorizationSecurity:
         await handlers.channel_join("sid-1", {"channelId": "100"})
 
         # Should succeed
-        assert "sid-1" in mock_sio.rooms["100"]
+        assert "sid-1" in mock_sio_with_sessions.rooms["100"]
 
     @pytest.mark.asyncio
-    async def test_cannot_join_without_channel_id(self, mock_sio):
+    async def test_cannot_join_without_channel_id(self, mock_sio_with_sessions):
         """Test that channelId is required to join a channel."""
-        handlers = SocketEventHandlers(mock_sio, TEST_FERNET_KEY)
+        handlers = SocketEventHandlers(mock_sio_with_sessions, TEST_FERNET_KEY)
 
         token = create_test_token(user_id=1, role_id=10, session_id=100)
         await handlers.connect("sid-1", {}, {"token": token})
 
-        mock_sio.emitted_events.clear()
+        mock_sio_with_sessions.emitted_events.clear()
         await handlers.channel_join("sid-1", {})  # No channelId
 
-        error_events = [e for e in mock_sio.emitted_events if e["event"] == "error"]
+        error_events = [e for e in mock_sio_with_sessions.emitted_events if e["event"] == "error"]
         assert len(error_events) == 1
         assert "channelId required" in error_events[0]["data"]["message"]
 
     @pytest.mark.asyncio
-    async def test_message_requires_channel_and_content(self, mock_sio):
+    async def test_message_requires_channel_and_content(self, mock_sio_with_sessions):
         """Test that message_send requires both channelId and content."""
-        handlers = SocketEventHandlers(mock_sio, TEST_FERNET_KEY)
+        handlers = SocketEventHandlers(mock_sio_with_sessions, TEST_FERNET_KEY)
 
         token = create_test_token(user_id=1, role_id=10, session_id=100)
         await handlers.connect("sid-1", {}, {"token": token})
 
         # Missing content
-        mock_sio.emitted_events.clear()
+        mock_sio_with_sessions.emitted_events.clear()
         await handlers.message_send("sid-1", {"channelId": "100"})
 
-        error_events = [e for e in mock_sio.emitted_events if e["event"] == "error"]
+        error_events = [e for e in mock_sio_with_sessions.emitted_events if e["event"] == "error"]
         assert len(error_events) == 1
 
         # Missing channelId
-        mock_sio.emitted_events.clear()
+        mock_sio_with_sessions.emitted_events.clear()
         await handlers.message_send("sid-1", {"content": "Hello"})
 
-        error_events = [e for e in mock_sio.emitted_events if e["event"] == "error"]
+        error_events = [e for e in mock_sio_with_sessions.emitted_events if e["event"] == "error"]
         assert len(error_events) == 1
 
 
@@ -1120,12 +999,8 @@ class TestMessageMetadataForOrdering:
     Messages must include metadata for clients to order correctly.
     """
 
-    @pytest.fixture
-    def mock_sio(self):
-        return create_mock_sio_with_sessions()
-
     @pytest.mark.asyncio
-    async def test_message_includes_all_ordering_metadata(self, mock_sio):
+    async def test_message_includes_all_ordering_metadata(self, mock_sio_with_sessions):
         """
         Verify messages include all fields needed for ordering and display.
 
@@ -1135,15 +1010,15 @@ class TestMessageMetadataForOrdering:
         - content: the actual message
         - timestamp: for chronological ordering
         """
-        handlers = SocketEventHandlers(mock_sio, TEST_FERNET_KEY)
+        handlers = SocketEventHandlers(mock_sio_with_sessions, TEST_FERNET_KEY)
 
         token = create_test_token(user_id=42, role_id=10, session_id=100)
         await handlers.connect("sid-1", {}, {"token": token})
 
-        mock_sio.emitted_events.clear()
+        mock_sio_with_sessions.emitted_events.clear()
         await handlers.message_send("sid-1", {"channelId": "100", "content": "Test message"})
 
-        msg_events = [e for e in mock_sio.emitted_events if e["event"] == "message:received"]
+        msg_events = [e for e in mock_sio_with_sessions.emitted_events if e["event"] == "message:received"]
         assert len(msg_events) == 1
 
         data = msg_events[0]["data"]
@@ -1154,7 +1029,7 @@ class TestMessageMetadataForOrdering:
         assert data["timestamp"].endswith("Z")
 
     @pytest.mark.asyncio
-    async def test_read_receipt_includes_correlation_ids(self, mock_sio):
+    async def test_read_receipt_includes_correlation_ids(self, mock_sio_with_sessions):
         """
         Verify read receipts include IDs for correlating with messages.
 
@@ -1163,12 +1038,12 @@ class TestMessageMetadataForOrdering:
         - messageId: which message was read
         - readerId: who read it
         """
-        handlers = SocketEventHandlers(mock_sio, TEST_FERNET_KEY)
+        handlers = SocketEventHandlers(mock_sio_with_sessions, TEST_FERNET_KEY)
 
         token = create_test_token(user_id=42, role_id=10, session_id=100)
         await handlers.connect("sid-1", {}, {"token": token})
 
-        mock_sio.emitted_events.clear()
+        mock_sio_with_sessions.emitted_events.clear()
         await handlers.message_read(
             "sid-1",
             {
@@ -1178,7 +1053,7 @@ class TestMessageMetadataForOrdering:
             },
         )
 
-        read_events = [e for e in mock_sio.emitted_events if e["event"] == "message:read"]
+        read_events = [e for e in mock_sio_with_sessions.emitted_events if e["event"] == "message:read"]
         assert len(read_events) == 1
 
         data = read_events[0]["data"]
