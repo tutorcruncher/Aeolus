@@ -210,10 +210,10 @@ class TestMultiWorkerMessageDelivery:
         3. Both join the same chat channel (session 100)
         4. Student sends a message -> Tutor receives it via pub/sub
         5. Tutor sends a reply -> Student receives it via pub/sub
-        6. Tutor marks message as read -> Student sees read receipt
-        7. Student disconnects -> Tutor is notified
+        6. Student leaves channel -> Tutor is notified
 
-        This tests the full lifecycle of a tutoring chat session.
+        Read receipts are driven by the TC2 backend via HTTP API (POST /chat/user-read),
+        not by client-to-server socket events.
         """
         handlers1 = SocketEventHandlers(worker1_sio, TEST_FERNET_KEY)
         handlers2 = SocketEventHandlers(worker2_sio, TEST_FERNET_KEY)
@@ -309,32 +309,7 @@ class TestMultiWorkerMessageDelivery:
         assert worker2_pubsub_msgs[0]["data"]["content"] == "Sure! What topic are you struggling with?"
         assert worker2_pubsub_msgs[0]["data"]["senderId"] == 1
 
-        # === STEP 6: Student marks message as read ===
-        worker1_sio.emitted_events.clear()
-        worker2_sio.emitted_events.clear()
-
-        await handlers2.message_read(
-            student_sid,
-            {
-                "channelId": "100",
-                "messageId": "msg-001",
-                "readAt": "2026-01-06T14:30:00Z",
-                "complete": True,
-                "readers": [{"role_id": 20, "name": "Student", "read_at": "2026-01-06T14:30:00Z"}],
-            },
-        )
-
-        # Verify read receipt propagated to worker 1
-        worker1_read_receipts = [
-            e for e in worker1_sio.emitted_events if e["event"] == "message:read" and e["source"] == "pubsub"
-        ]
-        assert len(worker1_read_receipts) == 1
-        assert worker1_read_receipts[0]["data"]["messageId"] == "msg-001"
-        assert worker1_read_receipts[0]["data"]["readerId"] == 2
-        assert worker1_read_receipts[0]["data"]["complete"] is True
-        assert len(worker1_read_receipts[0]["data"]["readers"]) == 1
-
-        # === STEP 7: Student leaves channel ===
+        # === STEP 6: Student leaves channel ===
         worker1_sio.emitted_events.clear()
         worker2_sio.emitted_events.clear()
 
@@ -428,46 +403,6 @@ class TestMultiWorkerMessageDelivery:
         assert join_events[0]["data"]["channelId"] == "100"
         assert join_events[0]["room"] == "100"
 
-    @pytest.mark.asyncio
-    async def test_read_receipt_with_multiple_readers(self, worker1_sio, worker2_sio):
-        """
-        Test read receipt with multiple readers list (group chat scenario).
-
-        In group chats, a message can be read by multiple people.
-        The readers list tracks who has read the message.
-        """
-        handlers1 = SocketEventHandlers(worker1_sio, TEST_FERNET_KEY)
-
-        token = create_test_token(user_id=1, role_id=10, session_id=100)
-        await handlers1.connect("sid-1", {}, {"token": token})
-
-        worker2_sio.emitted_events.clear()
-
-        await handlers1.message_read(
-            "sid-1",
-            {
-                "channelId": "100",
-                "messageId": "msg-group-001",
-                "readAt": "2026-01-06T15:00:00Z",
-                "complete": False,  # Not everyone has read yet
-                "readers": [
-                    {"role_id": 10, "name": "Tutor A", "read_at": "2026-01-06T14:55:00Z"},
-                    {"role_id": 20, "name": "Student B", "read_at": "2026-01-06T15:00:00Z"},
-                ],
-            },
-        )
-
-        read_events = [
-            e for e in worker2_sio.emitted_events if e["event"] == "message:read" and e["source"] == "pubsub"
-        ]
-
-        assert len(read_events) == 1
-        data = read_events[0]["data"]
-        assert data["messageId"] == "msg-group-001"
-        assert data["complete"] is False
-        assert len(data["readers"]) == 2
-        assert data["readers"][0]["name"] == "Tutor A"
-        assert data["readers"][1]["name"] == "Student B"
 
 
 class TestSessionIsolation:
@@ -779,78 +714,66 @@ class TestHTTPAPIMultiWorkerPropagation(AioHTTPTestCase):
         assert "timestamp" in emit_data
         assert emit_data["timestamp"].endswith("Z")  # UTC ISO format
 
-    async def test_read_receipt_full_payload(self):
+    async def test_user_read_full_payload(self):
         """
-        Test POST /chat/read-receipt with complete payload including readers list.
+        Test POST /chat/user-read with complete payload.
         """
         headers = {"Authorization": f"Bearer {TEST_SERVER_SECRET}"}
         payload = {
             "channelId": "chat_100",
-            "messageId": 42,
-            "readerId": 9,
-            "readAt": "2026-01-06T12:30:00Z",
-            "complete": True,
-            "readers": [
-                {"role_id": 9, "name": "Reader One", "read_at": "2026-01-06T12:30:00Z"},
-                {"role_id": 10, "name": "Reader Two", "read_at": "2026-01-06T12:31:00Z"},
-            ],
+            "readerId": 456,
+            "readerName": "John Smith",
         }
 
-        r = await self.client.request("POST", "/chat/read-receipt", json=payload, headers=headers)
+        r = await self.client.request("POST", "/chat/user-read", json=payload, headers=headers)
         assert r.status == 200
 
         call_args = self.mock_sio.emit.call_args
-        assert call_args[0][0] == "message:read"
+        assert call_args[0][0] == "chat:user_read"
 
         emit_data = call_args[0][1]
         assert emit_data["channelId"] == "chat_100"
-        assert emit_data["messageId"] == 42
-        assert emit_data["readerId"] == 9
-        assert emit_data["readAt"] == "2026-01-06T12:30:00Z"
-        assert emit_data["complete"] is True
-        assert len(emit_data["readers"]) == 2
+        assert emit_data["readerId"] == 456
+        assert emit_data["readerName"] == "John Smith"
         assert call_args[1]["room"] == "chat_100"
 
-    async def test_read_receipt_minimal_payload(self):
+    async def test_user_read_without_reader_name(self):
         """
-        Test read receipt with only required fields (channelId, messageId).
+        Test user-read with only required fields (channelId, readerId).
         """
         headers = {"Authorization": f"Bearer {TEST_SERVER_SECRET}"}
         payload = {
             "channelId": "chat_100",
-            "messageId": 43,
+            "readerId": 456,
         }
 
-        r = await self.client.request("POST", "/chat/read-receipt", json=payload, headers=headers)
+        r = await self.client.request("POST", "/chat/user-read", json=payload, headers=headers)
         assert r.status == 200
 
         call_args = self.mock_sio.emit.call_args
         emit_data = call_args[0][1]
 
         assert emit_data["channelId"] == "chat_100"
-        assert emit_data["messageId"] == 43
-        assert emit_data["complete"] is False  # Default
-        assert "readerId" not in emit_data
-        assert "readAt" not in emit_data
-        assert "readers" not in emit_data
+        assert emit_data["readerId"] == 456
+        assert emit_data["readerName"] == ""
 
     async def test_authentication_required(self):
         """Test that HTTP API requires valid Bearer token."""
-        payload = {"channelId": "chat_100", "messageId": 1}
+        payload = {"channelId": "chat_100", "readerId": 456}
 
         # No auth header
-        r = await self.client.request("POST", "/chat/read-receipt", json=payload)
+        r = await self.client.request("POST", "/chat/user-read", json=payload)
         assert r.status == 401
 
         # Wrong token
         r = await self.client.request(
-            "POST", "/chat/read-receipt", json=payload, headers={"Authorization": "Bearer wrong-secret"}
+            "POST", "/chat/user-read", json=payload, headers={"Authorization": "Bearer wrong-secret"}
         )
         assert r.status == 401
 
         # Correct token
         r = await self.client.request(
-            "POST", "/chat/read-receipt", json=payload, headers={"Authorization": f"Bearer {TEST_SERVER_SECRET}"}
+            "POST", "/chat/user-read", json=payload, headers={"Authorization": f"Bearer {TEST_SERVER_SECRET}"}
         )
         assert r.status == 200
 
@@ -1026,36 +949,3 @@ class TestMessageMetadataForOrdering:
         assert "timestamp" in data
         assert data["timestamp"].endswith("Z")
 
-    @pytest.mark.asyncio
-    async def test_read_receipt_includes_correlation_ids(self, mock_sio_with_sessions):
-        """
-        Verify read receipts include IDs for correlating with messages.
-
-        Required fields:
-        - channelId: which conversation
-        - messageId: which message was read
-        - readerId: who read it
-        """
-        handlers = SocketEventHandlers(mock_sio_with_sessions, TEST_FERNET_KEY)
-
-        token = create_test_token(user_id=42, role_id=10, session_id=100)
-        await handlers.connect("sid-1", {}, {"token": token})
-
-        mock_sio_with_sessions.emitted_events.clear()
-        await handlers.message_read(
-            "sid-1",
-            {
-                "channelId": "100",
-                "messageId": "msg-999",
-                "readAt": "2026-01-06T16:00:00Z",
-            },
-        )
-
-        read_events = [e for e in mock_sio_with_sessions.emitted_events if e["event"] == "message:read"]
-        assert len(read_events) == 1
-
-        data = read_events[0]["data"]
-        assert data["channelId"] == "100"
-        assert data["messageId"] == "msg-999"
-        assert data["readerId"] == 42
-        assert data["readAt"] == "2026-01-06T16:00:00Z"

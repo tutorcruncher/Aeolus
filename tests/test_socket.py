@@ -99,15 +99,15 @@ class TestSocketEventHandlers:
     @pytest.mark.asyncio
     async def test_channel_join(self, handlers, mock_sio):
         mock_sio.get_session.return_value = {"userId": 123, "chatSessionId": 456}
-        await handlers.channel_join("test-sid", {"channelId": "456"})
+        await handlers.channel_join("test-sid", {"channelId": "chat_456"})
 
-        mock_sio.enter_room.assert_called_once_with("test-sid", "456")
+        mock_sio.enter_room.assert_called_once_with("test-sid", "chat_456")
         assert mock_sio.emit.call_count == 2
 
     @pytest.mark.asyncio
     async def test_channel_join_unauthorized(self, handlers, mock_sio):
         mock_sio.get_session.return_value = {"userId": 123, "chatSessionId": 456}
-        await handlers.channel_join("test-sid", {"channelId": "789"})
+        await handlers.channel_join("test-sid", {"channelId": "chat_789"})
 
         mock_sio.enter_room.assert_not_called()
         mock_sio.emit.assert_called_once_with("error", {"message": "Unauthorized for this channel"}, to="test-sid")
@@ -132,34 +132,6 @@ class TestSocketEventHandlers:
         assert call_args[0][1]["channelId"] == "channel123"
         assert call_args[0][1]["content"] == "Hello"
         assert "timestamp" in call_args[0][1]
-
-    @pytest.mark.asyncio
-    async def test_message_read(self, handlers, mock_sio):
-        mock_sio.get_session.return_value = {"userId": 123}
-        await handlers.message_read(
-            "test-sid",
-            {
-                "channelId": "channel123",
-                "messageId": "msg-1",
-                "readAt": "2026-01-06T12:00:00Z",
-                "complete": True,
-                "readers": [{"role_id": 5, "name": "Tester", "read_at": "2026-01-06T12:00:00Z"}],
-            },
-        )
-
-        mock_sio.emit.assert_called_with(
-            "message:read",
-            {
-                "channelId": "channel123",
-                "messageId": "msg-1",
-                "readerId": 123,
-                "readAt": "2026-01-06T12:00:00Z",
-                "complete": True,
-                "readers": [{"role_id": 5, "name": "Tester", "read_at": "2026-01-06T12:00:00Z"}],
-            },
-            room="channel123",
-            skip_sid="test-sid",
-        )
 
     @pytest.mark.asyncio
     async def test_disconnect_with_session(self, handlers, mock_sio):
@@ -205,16 +177,3 @@ class TestSocketEventHandlers:
 
         mock_sio.emit.assert_called_once_with("error", {"message": "channelId and content required"}, to="test-sid")
 
-    @pytest.mark.asyncio
-    async def test_message_read_missing_channel_id(self, handlers, mock_sio):
-        """Test message_read returns error when channelId is missing."""
-        await handlers.message_read("test-sid", {"messageId": "msg-1"})
-
-        mock_sio.emit.assert_called_once_with("error", {"message": "channelId and messageId required"}, to="test-sid")
-
-    @pytest.mark.asyncio
-    async def test_message_read_missing_message_id(self, handlers, mock_sio):
-        """Test message_read returns error when messageId is missing."""
-        await handlers.message_read("test-sid", {"channelId": "channel123"})
-
-        mock_sio.emit.assert_called_once_with("error", {"message": "channelId and messageId required"}, to="test-sid")

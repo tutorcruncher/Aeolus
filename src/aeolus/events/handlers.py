@@ -92,7 +92,8 @@ class SocketEventHandlers:
         user_id = session.get("userId")
         authorized_session_id = session.get("chatSessionId")
 
-        if str(authorized_session_id) != str(channel_id):
+        raw_channel_id = str(channel_id).removeprefix("chat_")
+        if str(authorized_session_id) != raw_channel_id:
             logger.warning(
                 f"User {user_id} ({sid}) unauthorized for channel {channel_id} (authorized for {authorized_session_id})"
             )
@@ -153,36 +154,6 @@ class SocketEventHandlers:
             skip_sid=sid,
         )
 
-    async def message_read(self, sid: str, data: dict) -> None:
-        channel_id = data.get("channelId")
-        message_id = data.get("messageId")
-
-        if not channel_id or not message_id:
-            await self.sio.emit("error", {"message": "channelId and messageId required"}, to=sid)
-            return
-
-        session = await self.sio.get_session(sid)
-        reader_id = session.get("userId")
-        read_at = data.get("readAt") or utc_now_iso()
-        complete = bool(data.get("complete"))
-        readers = data.get("readers")
-
-        payload = {
-            "channelId": channel_id,
-            "messageId": message_id,
-            "readerId": reader_id,
-            "readAt": read_at,
-            "complete": complete,
-        }
-        if isinstance(readers, list):
-            payload["readers"] = readers
-
-        logger.info(
-            f"Read receipt from user {reader_id} in channel {channel_id} (message {message_id}, complete={complete})"
-        )
-        await self.sio.emit("message:read", payload, room=channel_id, skip_sid=sid)
-
-
 def setup_socket_events(sio: socketio.AsyncServer, fernet_key: str | None) -> None:
     handlers = SocketEventHandlers(sio, fernet_key)
 
@@ -191,4 +162,3 @@ def setup_socket_events(sio: socketio.AsyncServer, fernet_key: str | None) -> No
     sio.on("channel_join", handlers.channel_join)
     sio.on("channel_leave", handlers.channel_leave)
     sio.on("message_send", handlers.message_send)
-    sio.on("message_read", handlers.message_read)
