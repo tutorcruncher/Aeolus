@@ -404,7 +404,6 @@ class TestMultiWorkerMessageDelivery:
         assert join_events[0]["room"] == "100"
 
 
-
 class TestSessionIsolation:
     """
     Tests for session state isolation between workers.
@@ -948,4 +947,3 @@ class TestMessageMetadataForOrdering:
         assert data["content"] == "Test message"
         assert "timestamp" in data
         assert data["timestamp"].endswith("Z")
-

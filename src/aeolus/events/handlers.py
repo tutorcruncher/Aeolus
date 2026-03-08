@@ -154,6 +154,7 @@ class SocketEventHandlers:
             skip_sid=sid,
         )
 
+
 def setup_socket_events(sio: socketio.AsyncServer, fernet_key: str | None) -> None:
     handlers = SocketEventHandlers(sio, fernet_key)
 

@@ -176,4 +176,3 @@ class TestSocketEventHandlers:
         await handlers.message_send("test-sid", {"channelId": "channel123"})
 
         mock_sio.emit.assert_called_once_with("error", {"message": "channelId and content required"}, to="test-sid")
-

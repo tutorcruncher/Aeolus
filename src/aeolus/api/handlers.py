@@ -104,6 +104,8 @@ class APIHandlers:
             emit_payload["senderName"] = payload["senderName"]
         if "replyToId" in payload:
             emit_payload["replyToId"] = payload["replyToId"]
+        if "sequenceNumber" in payload:
+            emit_payload["sequenceNumber"] = payload["sequenceNumber"]
 
         logger.info("Broadcasting chat message %s to channel %s", payload["messageId"], payload["channelId"])
         await self.socket_server.emit("message:received", emit_payload, room=payload["channelId"])
